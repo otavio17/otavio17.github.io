@@ -28,6 +28,7 @@
   td.fail { color: #b91c1c; font-weight: 600; }
   #env { font-size: 13px; background: #fff; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
   #env div { padding: 2px 0; }
+  #aparelho { font-size: 12px; color: #4b5563; margin: -4px 0 12px; }
   #envio { font-size: 13px; text-align: center; margin: -8px 0 8px; min-height: 18px; color: #4b5563; }
   footer { margin: 28px 0 12px; padding-top: 14px; border-top: 1px solid #d1d5db; text-align: center; color: #6b7280; font-size: 12px; }
   footer .marca { font-size: 16px; font-weight: 800; letter-spacing: 1px; color: #111827; }
@@ -40,8 +41,9 @@
   <p class="sub">Toque em Iniciar e encoste o cartão ou a tag na área de aproximação da máquina.</p>
 
   <div id="env"></div>
+  <div id="aparelho"></div>
 
-  <label for="maq">Número de série da máquina (obrigatório)</label>
+  <label for="maq">Número de série da máquina (recomendado)</label>
   <input id="maq" placeholder="ex.: D80-00123" autocomplete="off">
 
   <button id="start">Iniciar teste</button>
@@ -64,7 +66,7 @@
 
 <script>
 (function () {
-  var TEMPO_LIMITE = 20; // segundos esperando o cartão
+  var TEMPO_LIMITE = 45; // segundos esperando o cartão
   var URL_PLANILHA = 'https://script.google.com/macros/s/AKfycbw1aUT7gxjJ7SVNtZ2GWO_UNT1qIx3HcxBfkImNinTCofNK0nndlCOx7_MBJcncxPpOJA/exec';
   var el = function (id) { return document.getElementById(id); };
   var statusEl = el('status'), startBtn = el('start'), logEl = el('log');
@@ -84,14 +86,99 @@
     if (pre) document.getElementById('maq').value = pre;
   } catch (e) {}
 
+  // ---- Informações do aparelho ----
+  var info = {};
+  var inicioTeste = 0, tipoLeitura = '', serieTag = '', motivo = '', erroTecnico = '';
+
+  function guardar(k, v) { if (v !== undefined && v !== null && v !== '') info[k] = v; }
+
+  // Identificador fixo deste aparelho (gerado na 1ª visita), para agrupar testes sem número de série
+  var idAparelho = '', tentativa = 0;
+  try {
+    idAparelho = localStorage.getItem('nfc_id') || '';
+    if (!idAparelho) {
+      idAparelho = 'AP-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+      localStorage.setItem('nfc_id', idAparelho);
+    }
+    tentativa = parseInt(localStorage.getItem('nfc_tentativas') || '0', 10) || 0;
+  } catch (e) { idAparelho = 'AP-SEM-MEMORIA'; }
+
+  function coletarFixos() {
+    var ua = navigator.userAgent;
+    var mAnd = ua.match(/Android ([\d.]+)/), mChr = ua.match(/Chrome\/([\d.]+)/);
+    var mMod = ua.match(/Android [\d.]+; ([^)]+?)(?: Build|\))/);
+    guardar('ID do aparelho', idAparelho);
+    guardar('Android', mAnd ? mAnd[1] : '');
+    guardar('Chrome', mChr ? mChr[1] : '');
+    guardar('Modelo', mMod ? mMod[1] : '');
+    guardar('Tela', screen.width + 'x' + screen.height + ' @' + (window.devicePixelRatio || 1));
+    guardar('Memoria (GB)', navigator.deviceMemory);
+    guardar('Nucleos', navigator.hardwareConcurrency);
+    guardar('Idioma', navigator.language);
+    try { guardar('Fuso', Intl.DateTimeFormat().resolvedOptions().timeZone); } catch (e) {}
+    guardar('Aparelho', ua);
+    // Modelo e versão reais (o Chrome novo esconde isso no texto acima)
+    if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+      navigator.userAgentData.getHighEntropyValues(['model', 'platformVersion', 'uaFullVersion']).then(function (h) {
+        if (h.model) info['Modelo'] = h.model;
+        if (h.platformVersion) info['Android'] = h.platformVersion;
+        if (h.uaFullVersion) info['Chrome'] = h.uaFullVersion;
+        mostrarAparelho();
+      }, function () {});
+    }
+    if (navigator.getBattery) {
+      navigator.getBattery().then(function (b) {
+        info['Bateria (%)'] = Math.round(b.level * 100);
+        info['Carregando'] = b.charging ? 'sim' : 'nao';
+        mostrarAparelho();
+      }, function () {});
+    }
+  }
+
+  function coletarRede() {
+    var c = navigator.connection || {};
+    var tipos = { wifi: 'Wi-Fi', cellular: 'Dados moveis', ethernet: 'Cabo', none: 'Sem rede', bluetooth: 'Bluetooth' };
+    info['Online'] = navigator.onLine ? 'sim' : 'nao';
+    info['Conexao'] = c.type ? (tipos[c.type] || c.type) : 'nao informado';
+    info['Wi-Fi ligado'] = c.type ? (c.type === 'wifi' ? 'sim' : 'nao') : 'nao informado';
+    if (c.effectiveType) info['Qualidade da rede'] = c.effectiveType;
+    if (c.downlink !== undefined) info['Velocidade (Mbps)'] = c.downlink;
+    if (c.rtt !== undefined) info['Latencia (ms)'] = c.rtt;
+  }
+
+  function mostrarAparelho() {
+    var d = el('aparelho');
+    if (!d) return;
+    coletarRede();
+    var partes = [];
+    if (info['Modelo']) partes.push(info['Modelo']);
+    if (info['Android']) partes.push('Android ' + info['Android']);
+    partes.push('Rede: ' + info['Conexao']);
+    if (info['Bateria (%)'] !== undefined) partes.push('Bateria ' + info['Bateria (%)'] + '%');
+    partes.push('ID ' + idAparelho);
+    d.textContent = partes.join(' · ');
+  }
+
   function enviar(maq, ok, texto) {
     var envioEl = el('envio');
+    coletarRede();
+    tentativa++;
+    try { localStorage.setItem('nfc_tentativas', String(tentativa)); } catch (e) {}
+    var campos = { 'Maquina': maq || '(sem serie)', 'Resultado': ok ? 'OK' : 'FALHA', 'Detalhe': texto };
+    campos['Tempo ate detectar (s)'] = ok && inicioTeste ? ((Date.now() - inicioTeste) / 1000).toFixed(1) : '';
+    campos['Motivo provavel'] = motivo;
+    campos['Erro tecnico'] = erroTecnico;
+    campos['Tipo de leitura'] = tipoLeitura;
+    campos['Serie da tag'] = serieTag;
+    campos['Teste no deste aparelho'] = tentativa;
+    campos['Tempo limite (s)'] = TEMPO_LIMITE;
+    for (var k in info) campos[k] = info[k];
     envioEl.textContent = 'Enviando resultado para a planilha...';
     fetch(URL_PLANILHA, {
       method: 'POST',
       mode: 'no-cors',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ maquina: maq, resultado: ok ? 'OK' : 'FALHA', detalhe: texto, aparelho: navigator.userAgent })
+      body: JSON.stringify({ campos: campos })
     }).then(
       function () { envioEl.textContent = 'Resultado enviado para a planilha.'; },
       function () { envioEl.textContent = 'Sem conexão: resultado NÃO enviado. Refaça o teste com internet.'; }
@@ -111,20 +198,24 @@
     d.style.color = ok ? '#15803d' : '#b91c1c';
     env.appendChild(d);
   }
+  coletarFixos();
+  mostrarAparelho();
   linha(temApi, temApi ? 'Navegador com suporte a NFC' : 'Navegador sem suporte a NFC (use o Chrome para Android)');
   linha(seguro, seguro ? 'Página em HTTPS' : 'A página precisa ser aberta em HTTPS');
   linha(topo, topo ? 'Página aberta diretamente' : 'Abra a página direto no Chrome, não dentro de outro site ou app');
 
-  if (!temApi || !seguro || !topo) {
-    startBtn.disabled = true;
+  var semSuporte = !temApi || !seguro || !topo;
+  if (semSuporte) {
+    startBtn.textContent = 'Registrar esta máquina na planilha';
     setStatus('fail', 'Não dá para testar aqui',
-      'Este navegador ou esta forma de abrir a página não permite acesso ao NFC. Veja os itens em vermelho acima.');
+      'Este navegador ou esta forma de abrir a página não permite acesso ao NFC. Veja os itens em vermelho acima. Toque no botão para registrar a máquina mesmo assim.');
   }
 
   // ---- Histórico ----
   function registrar(ok, texto) {
     var maq = el('maq').value.trim();
     enviar(maq, ok, texto);
+    if (!maq) maq = idAparelho;
     var hora = new Date().toLocaleTimeString('pt-BR');
     historico.push({ hora: hora, maq: maq, ok: ok, texto: texto });
     if (historico.length === 1) logEl.innerHTML = '';
@@ -151,12 +242,18 @@
 
   // ---- Teste ----
   startBtn.addEventListener('click', async function () {
-    if (!el('maq').value.trim()) {
-      setStatus('fail', 'Falta o número de série', 'Digite o número de série da máquina antes de iniciar o teste.');
-      el('maq').focus();
+    if (semSuporte) {
+      finalizado = false;
+      motivo = !temApi ? 'Navegador sem suporte a NFC (nao e Chrome para Android, ou aparelho sem NFC)'
+             : (!seguro ? 'Pagina aberta sem HTTPS' : 'Pagina aberta dentro de outro site/app');
+      erroTecnico = 'NDEFReader=' + temApi + ' https=' + seguro + ' topo=' + topo;
+      startBtn.disabled = true;
+      encerrar('fail', 'Registrado como falha', 'Teste impossível neste navegador. ' + motivo + '.', false, 'FALHA - sem suporte');
+      startBtn.textContent = 'Registrar de novo';
       return;
     }
     el('envio').textContent = '';
+    tipoLeitura = ''; serieTag = ''; motivo = ''; erroTecnico = ''; inicioTeste = Date.now();
     startBtn.disabled = true;
     finalizado = false;
     ctrl = new AbortController();
@@ -164,10 +261,12 @@
     try {
       leitor = new NDEFReader();
       leitor.onreading = function (ev) {
+        motivo = 'NFC funcionando'; tipoLeitura = 'Tag NDEF lida'; serieTag = ev.serialNumber || '';
         var serie = ev.serialNumber ? ' Nº da tag: ' + ev.serialNumber + '.' : '';
         encerrar('ok', 'NFC OK', 'A máquina detectou e leu a tag.' + serie, true, 'OK - leu a tag');
       };
       leitor.onreadingerror = function () {
+        motivo = 'NFC funcionando'; tipoLeitura = 'Cartao detectado (nao NDEF)';
         // Cartão de pagamento não é NDEF: o Chrome detecta mas não consegue ler o conteúdo.
         // Para este teste isso basta: a antena enxergou o cartão.
         encerrar('ok', 'NFC OK', 'A máquina detectou o cartão. (O conteúdo não é legível pelo navegador, o que é normal para cartão de pagamento.)',
@@ -177,6 +276,11 @@
     } catch (err) {
       finalizado = false;
       var msg = 'Erro ao ligar o NFC: ' + (err && err.name ? err.name : err);
+      erroTecnico = (err && err.name ? err.name : 'erro') + (err && err.message ? ': ' + err.message : '');
+      motivo = 'Erro desconhecido ao ligar o NFC';
+      if (err && err.name === 'NotAllowedError') motivo = 'Permissao de NFC negada no Chrome';
+      if (err && err.name === 'NotSupportedError') motivo = 'Aparelho sem NFC ou NFC nao reconhecido pelo Android';
+      if (err && err.name === 'NotReadableError') motivo = 'NFC desligado nas configuracoes do Android';
       if (err && err.name === 'NotAllowedError') msg = 'Permissão de NFC negada. Libere o NFC para este site no Chrome e tente de novo.';
       if (err && err.name === 'NotSupportedError') msg = 'Este aparelho não tem NFC compatível com o navegador.';
       if (err && err.name === 'NotReadableError') msg = 'O NFC está desligado ou indisponível. Ative o NFC nas configurações do Android e tente de novo.';
@@ -184,11 +288,13 @@
       return;
     }
 
+    inicioTeste = Date.now();
     restante = TEMPO_LIMITE;
     setStatus('wait', 'Aproxime o cartão', 'Esperando leitura... ' + restante + ' s');
     timer = setInterval(function () {
       restante--;
       if (restante <= 0) {
+        motivo = 'NFC ligou mas nao detectou o cartao: provavel defeito na antena/leitor (confirmar com cartao que funciona em outra maquina)';
         encerrar('fail', 'Nada detectado',
           'Em ' + TEMPO_LIMITE + ' s a máquina não detectou nenhum cartão. Se o mesmo cartão funciona em outra máquina, o NFC desta está com problema.',
           false, 'FALHA - nada detectado');
