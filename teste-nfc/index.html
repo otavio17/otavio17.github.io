@@ -108,7 +108,7 @@
     var mAnd = ua.match(/Android ([\d.]+)/), mChr = ua.match(/Chrome\/([\d.]+)/);
     var mMod = ua.match(/Android [\d.]+; ([^)]+?)(?: Build|\))/);
     guardar('ID do aparelho', idAparelho);
-    guardar('Android', mAnd ? mAnd[1] : '');
+    guardar('Sistema', mAnd ? 'Android ' + mAnd[1] : (navigator.platform || ''));
     guardar('Chrome', mChr ? mChr[1] : '');
     guardar('Modelo', mMod ? mMod[1] : '');
     guardar('Tela', screen.width + 'x' + screen.height + ' @' + (window.devicePixelRatio || 1));
@@ -119,9 +119,9 @@
     guardar('Aparelho', ua);
     // Modelo e versão reais (o Chrome novo esconde isso no texto acima)
     if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
-      navigator.userAgentData.getHighEntropyValues(['model', 'platformVersion', 'uaFullVersion']).then(function (h) {
+      navigator.userAgentData.getHighEntropyValues(['model', 'platform', 'platformVersion', 'uaFullVersion']).then(function (h) {
         if (h.model) info['Modelo'] = h.model;
-        if (h.platformVersion) info['Android'] = h.platformVersion;
+        if (h.platform && h.platformVersion) info['Sistema'] = h.platform + ' ' + h.platformVersion;
         if (h.uaFullVersion) info['Chrome'] = h.uaFullVersion;
         mostrarAparelho();
       }, function () {});
@@ -152,7 +152,7 @@
     coletarRede();
     var partes = [];
     if (info['Modelo']) partes.push(info['Modelo']);
-    if (info['Android']) partes.push('Android ' + info['Android']);
+    if (info['Sistema']) partes.push(info['Sistema']);
     partes.push('Rede: ' + info['Conexao']);
     if (info['Bateria (%)'] !== undefined) partes.push('Bateria ' + info['Bateria (%)'] + '%');
     partes.push('ID ' + idAparelho);
